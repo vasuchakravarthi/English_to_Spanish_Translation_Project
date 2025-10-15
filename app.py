@@ -3,9 +3,18 @@ import tensorflow as tf
 import numpy as np
 import pickle
 import re
-import gdown  
-import os  
+import gdown
+import os
 from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.utils import get_custom_objects
+
+# Add compatibility for older TensorFlow models
+def custom_not_equal(x, y):
+    """Custom NotEqual layer for backward compatibility"""
+    return tf.not_equal(x, y)
+
+# Register the custom object
+get_custom_objects().update({'NotEqual': custom_not_equal})
 
 # Page configuration
 st.set_page_config(
@@ -18,14 +27,12 @@ st.set_page_config(
 def load_model_and_tokenizers():
     """Download and load model from Google Drive with tokenizers"""
     
-    # Define file paths
     model_path = 'simple_translation_model.h5'
     
     # Download model from Google Drive if not exists
     if not os.path.exists(model_path):
         st.info("📥 Downloading neural translation model from Google Drive... (first time only)")
         
-        # Your Google Drive file ID
         file_id = '1FeUEj87a03AU06b9HiL57xCVOn2m4EPQ'
         url = f'https://drive.google.com/uc?id={file_id}'
         
@@ -37,8 +44,24 @@ def load_model_and_tokenizers():
             return None, None, None, None, None, None
     
     try:
-        # Load model
-        model = tf.keras.models.load_model(model_path)
+        # Load model with custom objects for compatibility
+        custom_objects = {
+            'NotEqual': custom_not_equal,
+            'not_equal': tf.not_equal
+        }
+        
+        model = tf.keras.models.load_model(
+            model_path, 
+            custom_objects=custom_objects,
+            compile=False  # Skip compilation to avoid issues
+        )
+        
+        # Recompile the model
+        model.compile(
+            optimizer='adam',
+            loss='sparse_categorical_crossentropy',
+            metrics=['accuracy']
+        )
         
         # Load tokenizers  
         with open('eng_tokenizer.pkl', 'rb') as f:
@@ -55,8 +78,8 @@ def load_model_and_tokenizers():
         
     except Exception as e:
         st.error(f"Error loading model or tokenizers: {str(e)}")
+        st.info("💡 If this persists, the model may need to be retrained with TensorFlow 2.20.0")
         return None, None, None, None, None, None
-
 
 def preprocess_text(text, is_spanish=False):
     """Clean and preprocess text"""
