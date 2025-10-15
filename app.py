@@ -1,188 +1,174 @@
 import streamlit as st
+import tensorflow as tf
 import numpy as np
-import matplotlib.pyplot as plt
+import pickle
+import re
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 
-# Configure page
+# Page configuration
 st.set_page_config(
-    page_title="English-Spanish Neural Translator",
+    page_title="English to Spanish Neural Translator",
     page_icon="🌍",
     layout="centered"
 )
 
-# Title and description
-st.title("🌍 Neural Machine Translation")
-st.subheader("English → Spanish Translation")
-st.markdown("**Achieved 35.36 BLEU Score** - Commercial-grade neural translator")
-
-# Demo translation function
-def demo_translate(english_text):
-    """Demo translation with pre-defined examples"""
-    translations = {
-        "hello": "hola",
-        "how are you": "cómo estás",
-        "good morning": "buenos días",
-        "thank you": "gracias",
-        "i love you": "te amo",
-        "how are you?": "¿cómo estás?",
-        "hello, how are you?": "hola, ¿cómo estás?",
-        "i love machine learning": "me encanta el aprendizaje automático",
-        "the weather is beautiful today": "el clima está hermoso hoy",
-        "thank you for your help": "gracias por tu ayuda",
-        "artificial intelligence": "inteligencia artificial",
-        "neural networks": "redes neuronales",
-        "deep learning": "aprendizaje profundo",
-        "good night": "buenas noches",
-        "see you later": "nos vemos luego"
-    }
-    
-    # Clean input
-    clean_input = english_text.lower().strip()
-    
-    # Check for exact matches first
-    if clean_input in translations:
-        return translations[clean_input]
-    
-    # Check for partial matches
-    for eng, spa in translations.items():
-        if eng in clean_input or clean_input in eng:
-            return f"{spa} (aproximación basada en '{eng}')"
-    
-    # Default response
-    return "Lo siento, esta es una demostración. El modelo completo procesaría esta traducción."
-
-# Main interface
-st.markdown("---")
-
-# Input section
-st.markdown("### 📝 Enter English Text")
-english_input = st.text_area(
-    "Type your English sentence here:",
-    placeholder="e.g., Hello, how are you?",
-    height=100
-)
-
-# Translation button
-if st.button("🔄 Translate to Spanish", type="primary"):
-    if english_input:
-        with st.spinner("Translating..."):
-            spanish_output = demo_translate(english_input)
+@st.cache_resource
+def load_model_and_tokenizers():
+    """Load model and tokenizers (cached for performance)"""
+    try:
+        # Load model
+        model = tf.keras.models.load_model('simple_translation_model.h5')
         
-        # Results section
-        st.markdown("### 🎯 Translation Result")
-        st.success(spanish_output)
+        # Load tokenizers
+        with open('eng_tokenizer.pkl', 'rb') as f:
+            eng_word_to_idx, eng_idx_to_word = pickle.load(f)
+            
+        with open('spa_tokenizer.pkl', 'rb') as f:
+            spa_word_to_idx, spa_idx_to_word = pickle.load(f)
+            
+        # Load configuration
+        with open('config.pkl', 'rb') as f:
+            config = pickle.load(f)
+            
+        return model, eng_word_to_idx, eng_idx_to_word, spa_word_to_idx, spa_idx_to_word, config
         
+    except Exception as e:
+        st.error(f"Error loading model: {str(e)}")
+        return None, None, None, None, None, None
+
+def preprocess_text(text, is_spanish=False):
+    """Clean and preprocess text"""
+    text = text.lower()
+    if is_spanish:
+        text = re.sub(r'[^a-zA-Záéíóúñü¡¿\s\.,!?]', '', text)
     else:
-        st.warning("Please enter some English text to translate.")
+        text = re.sub(r'[^a-zA-Z\s\.,!?]', '', text)
+    text = re.sub(r'([.!?¡¿])', r' \1 ', text)
+    text = ' '.join(text.split())
+    return text.strip()
 
-# Example translations
-st.markdown("---")
-st.markdown("### 💡 Try These Examples:")
+def text_to_sequence(text, word_to_idx):
+    """Convert text to numbers"""
+    words = text.split()
+    return [word_to_idx.get(word, word_to_idx.get('<unk>', 1)) for word in words]
 
-examples = [
-    "Hello, how are you?",
-    "I love machine learning",
-    "The weather is beautiful today",
-    "Thank you for your help"
-]
+def translate_sentence(sentence, model, eng_tokenizer, spa_tokenizer, spa_idx_to_word, max_len_eng, max_len=17):
+    """Translate English sentence to Spanish"""
+    
+    # Preprocess input
+    sentence_clean = preprocess_text(sentence, is_spanish=False)
+    sentence_seq = text_to_sequence(sentence_clean, eng_tokenizer)
+    
+    if len(sentence_seq) == 0:
+        return "Unable to translate empty sentence"
+    
+    sentence_padded = pad_sequences([sentence_seq], maxlen=max_len_eng, padding='post')
+    
+    # Initialize decoder
+    decoder_input = np.zeros((1, max_len))
+    decoder_input[0, 0] = spa_tokenizer.get('<start>', 1)
+    
+    translation = []
+    
+    for i in range(1, max_len):
+        predictions = model.predict([sentence_padded, decoder_input[:, :i]], verbose=0)
+        predicted_id = np.argmax(predictions[0, i-1, :])
+        predicted_word = spa_idx_to_word.get(predicted_id, '<unk>')
+        
+        if predicted_word in ['<end>', '<pad>'] or predicted_id == 0:
+            break
+            
+        if predicted_word != '<unk>':
+            translation.append(predicted_word)
+            
+        decoder_input[0, i] = predicted_id
+    
+    result = ' '.join(translation).strip()
+    return result if result else "Translation failed"
 
-col1, col2 = st.columns(2)
-for i, example in enumerate(examples):
-    col = col1 if i % 2 == 0 else col2
-    with col:
-        if st.button(f"'{example}'", key=f"example_{i}"):
-            spanish_result = demo_translate(example)
-            st.write(f"**→** {spanish_result}")
+# Main app
+def main():
+    st.title("🌍 English to Spanish Neural Translator")
+    st.markdown("### Built by Vasu Chakravarthi Jaladi")
+    st.markdown("*Custom LSTM Encoder-Decoder Neural Network*")
+    
+    # Load model and tokenizers
+    model, eng_word_to_idx, eng_idx_to_word, spa_word_to_idx, spa_idx_to_word, config = load_model_and_tokenizers()
+    
+    if model is None:
+        st.error("❌ Failed to load model. Please check file paths.")
+        return
+    
+    st.success("✅ Neural translation model loaded successfully!")
+    
+    # Input section
+    st.markdown("## 📝 Enter English Text to Translate")
+    
+    # Text input
+    user_input = st.text_area(
+        "English sentence:",
+        placeholder="Type your English sentence here...",
+        height=100
+    )
+    
+    # Example sentences
+    if st.button("Try Example Sentences"):
+        examples = [
+            "Hello, how are you?",
+            "I am very happy.",
+            "Where is the bathroom?",
+            "Thank you very much.",
+            "I want to eat pizza."
+        ]
+        user_input = st.selectbox("Select an example:", examples)
+    
+    # Translation button
+    if st.button("🔄 Translate", type="primary"):
+        if user_input.strip():
+            with st.spinner("Translating..."):
+                try:
+                    translation = translate_sentence(
+                        user_input,
+                        model,
+                        eng_word_to_idx,
+                        spa_word_to_idx,
+                        spa_idx_to_word,
+                        config['MAX_LEN_ENG']
+                    )
+                    
+                    # Display results
+                    st.markdown("## 🎯 Translation Result")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**🇺🇸 English:**")
+                        st.info(user_input)
+                    
+                    with col2:
+                        st.markdown("**🇪🇸 Spanish:**")
+                        st.success(translation)
+                        
+                except Exception as e:
+                    st.error(f"Translation error: {str(e)}")
+        else:
+            st.warning("Please enter some text to translate.")
+    
+    # Model information
+    st.markdown("---")
+    st.markdown("### 📊 Model Information")
+    
+    if config:
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("English Vocabulary", f"{config['ENG_VOCAB_SIZE']:,}")
+        
+        with col2:
+            st.metric("Spanish Vocabulary", f"{config['SPA_VOCAB_SIZE']:,}")
+            
+        with col3:
+            st.metric("Architecture", "LSTM Encoder-Decoder")
 
-# Model performance visualization
-st.markdown("---")
-st.markdown("### 📊 Model Performance")
-
-# Create BLEU score comparison chart
-fig, ax = plt.subplots(figsize=(10, 6))
-models = ['Google Translate\n(Baseline)', 'Helsinki-NLP\n(Baseline)', 'Your Neural Model\n(Seq2Seq + Attention)']
-bleu_scores = [28.5, 31.2, 35.36]
-colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
-
-bars = ax.bar(models, bleu_scores, color=colors, alpha=0.8, edgecolor='white', linewidth=2)
-
-# Add value labels on bars
-for bar, score in zip(bars, bleu_scores):
-    height = bar.get_height()
-    ax.text(bar.get_x() + bar.get_width()/2., height + 0.5,
-            f'{score}', ha='center', va='bottom', fontweight='bold', fontsize=12)
-
-ax.set_ylabel('BLEU Score', fontsize=12, fontweight='bold')
-ax.set_title('Neural Translation Model Performance\n(Higher BLEU = Better Translation Quality)', 
-             fontsize=14, fontweight='bold', pad=20)
-ax.set_ylim(0, 40)
-ax.grid(axis='y', alpha=0.3)
-
-# Highlight your model
-bars[2].set_color('#FF6B35')
-bars[2].set_edgecolor('#000')
-bars[2].set_linewidth(3)
-
-plt.tight_layout()
-st.pyplot(fig)
-
-# Model info metrics
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.metric("BLEU Score", "35.36", "+4.16 vs Helsinki-NLP")
-with col2:
-    st.metric("Architecture", "Seq2Seq", "with Attention")
-with col3:
-    st.metric("Training Data", "60K pairs", "English-Spanish")
-
-# Technical details
-st.markdown("---")
-st.markdown("### 🔬 Technical Implementation")
-
-# Model Architecture Details
-st.markdown("**Neural Machine Translation Architecture:**")
-st.markdown("""
-- **Encoder**: LSTM layers with word embeddings
-- **Decoder**: LSTM with attention mechanism  
-- **Attention**: Bahdanau attention for alignment
-- **Vocabulary**: 10K English, 15K Spanish tokens
-- **Training**: 2.5 hours on RTX 2050 GPU
-- **Optimization**: Adam optimizer with learning rate scheduling
-- **Evaluation**: SacreBLEU for standardized scoring
-
-**Performance Achievements:**
-- ✅ 35.36 BLEU score (commercial grade)
-- ✅ Outperformed Helsinki-NLP baseline by 13%
-- ✅ Professional-quality translations
-""")
-
-# Training Process Visualization
-st.markdown("### 📈 Training Progress")
-
-# Simulate training loss curve
-epochs = list(range(1, 21))
-loss_values = [2.8, 2.3, 2.0, 1.8, 1.6, 1.4, 1.3, 1.2, 1.1, 1.0,
-              0.95, 0.9, 0.87, 0.84, 0.82, 0.8, 0.78, 0.76, 0.74, 0.72]
-
-fig2, ax2 = plt.subplots(figsize=(10, 4))
-ax2.plot(epochs, loss_values, color='#FF6B35', linewidth=3, marker='o', markersize=4)
-ax2.set_xlabel('Epochs')
-ax2.set_ylabel('Training Loss')
-ax2.set_title('Neural Translation Model Training Progress')
-ax2.grid(True, alpha=0.3)
-plt.tight_layout()
-st.pyplot(fig2)
-
-# Footer
-st.markdown("---")
-st.markdown(
-    """
-    <div style='text-align: center'>
-    <p>🚀 Built by <strong>Vasu Chakravarthi Jaladi</strong> | 
-    <a href='https://github.com/vasuchakravarthi/English_to_Spanish_Translation_Project' target='_blank'>View on GitHub</a> | 
-    Neural Machine Translation System</p>
-    <p><em>Note: This is a demonstration version. The full TensorFlow model is available in the GitHub repository.</em></p>
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
+if __name__ == "__main__":
+    main()
