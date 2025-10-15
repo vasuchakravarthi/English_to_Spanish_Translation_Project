@@ -3,6 +3,8 @@ import tensorflow as tf
 import numpy as np
 import pickle
 import re
+import gdown  
+import os  
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 # Page configuration
@@ -14,12 +16,31 @@ st.set_page_config(
 
 @st.cache_resource
 def load_model_and_tokenizers():
-    """Load model and tokenizers (cached for performance)"""
+    """Download and load model from Google Drive with tokenizers"""
+    
+    # Define file paths
+    model_path = 'simple_translation_model.h5'
+    
+    # Download model from Google Drive if not exists
+    if not os.path.exists(model_path):
+        st.info("📥 Downloading neural translation model from Google Drive... (first time only)")
+        
+        # Your Google Drive file ID
+        file_id = '1FeUEj87a03AU06b9HiL57xCVOn2m4EPQ'
+        url = f'https://drive.google.com/uc?id={file_id}'
+        
+        try:
+            gdown.download(url, model_path, quiet=False)
+            st.success("✅ Model downloaded successfully!")
+        except Exception as e:
+            st.error(f"❌ Error downloading model: {str(e)}")
+            return None, None, None, None, None, None
+    
     try:
         # Load model
-        model = tf.keras.models.load_model('simple_translation_model.h5')
+        model = tf.keras.models.load_model(model_path)
         
-        # Load tokenizers
+        # Load tokenizers  
         with open('eng_tokenizer.pkl', 'rb') as f:
             eng_word_to_idx, eng_idx_to_word = pickle.load(f)
             
@@ -33,8 +54,9 @@ def load_model_and_tokenizers():
         return model, eng_word_to_idx, eng_idx_to_word, spa_word_to_idx, spa_idx_to_word, config
         
     except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
+        st.error(f"Error loading model or tokenizers: {str(e)}")
         return None, None, None, None, None, None
+
 
 def preprocess_text(text, is_spanish=False):
     """Clean and preprocess text"""
