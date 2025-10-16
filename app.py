@@ -6,15 +6,8 @@ import re
 import gdown
 import os
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.utils import get_custom_objects
-
-# Add compatibility for older TensorFlow models
-def custom_not_equal(x, y):
-    """Custom NotEqual layer for backward compatibility"""
-    return tf.not_equal(x, y)
-
-# Register the custom object
-get_custom_objects().update({'NotEqual': custom_not_equal})
+from tensorflow.keras.layers import Input, Embedding, LSTM, Dense
+from tensorflow.keras.models import Model
 
 # Page configuration
 st.set_page_config(
@@ -23,62 +16,75 @@ st.set_page_config(
     layout="centered"
 )
 
+def create_model_architecture(eng_vocab_size, spa_vocab_size, embedding_dim=256, hidden_units=256):
+    """Create model architecture without mask_zero to avoid custom layers"""
+    
+    # Encoder
+    encoder_inputs = Input(shape=(None,), name='encoder_inputs')
+    encoder_embedding = Embedding(eng_vocab_size, embedding_dim, mask_zero=False)(encoder_inputs)  # No mask_zero!
+    encoder_lstm = LSTM(hidden_units, return_state=True, dropout=0.2)
+    encoder_outputs, state_h, state_c = encoder_lstm(encoder_embedding)
+    encoder_states = [state_h, state_c]
+
+    # Decoder
+    decoder_inputs = Input(shape=(None,), name='decoder_inputs')
+    decoder_embedding = Embedding(spa_vocab_size, embedding_dim, mask_zero=False)(decoder_inputs)  # No mask_zero!
+    decoder_lstm = LSTM(hidden_units, return_sequences=True, return_state=True, dropout=0.2)
+    decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
+    decoder_dense = Dense(spa_vocab_size, activation='softmax')(decoder_outputs)
+
+    model = Model([encoder_inputs, decoder_inputs], decoder_dense)
+    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    
+    return model
+
 @st.cache_resource
 def load_model_and_tokenizers():
-    """Download and load model from Google Drive with tokenizers"""
+    """Load model weights and tokenizers from Google Drive"""
     
-    model_path = 'simple_translation_model.h5'
+    weights_path = 'model_weights.h5'
+    architecture_path = 'model_architecture.pkl'
     
-    # Download model from Google Drive if not exists
-    if not os.path.exists(model_path):
-        st.info("📥 Downloading neural translation model from Google Drive... (first time only)")
+    # Download weights if not exists
+    if not os.path.exists(weights_path):
+        st.info("📥 Downloading model weights from Google Drive...")
         
-        file_id = '1FeUEj87a03AU06b9HiL57xCVOn2m4EPQ'
-        url = f'https://drive.google.com/uc?id={file_id}'
+        # Use new file ID for weights (you'll need to upload weights file to Google Drive)
+        weights_file_id = '1FeUEj87a03AU06b9HiL57xCVOn2m4EPQ'  # Replace with your weights file ID
+        url = f'https://drive.google.com/uc?id={weights_file_id}'
         
         try:
-            gdown.download(url, model_path, quiet=False)
-            st.success("✅ Model downloaded successfully!")
+            gdown.download(url, weights_path, quiet=False)
+            st.success("✅ Weights downloaded successfully!")
         except Exception as e:
-            st.error(f"❌ Error downloading model: {str(e)}")
+            st.error(f"❌ Error downloading weights: {str(e)}")
             return None, None, None, None, None, None
     
     try:
-        # Load model with custom objects for compatibility
-        custom_objects = {
-            'NotEqual': custom_not_equal,
-            'not_equal': tf.not_equal
-        }
-        
-        model = tf.keras.models.load_model(
-            model_path, 
-            custom_objects=custom_objects,
-            compile=False  # Skip compilation to avoid issues
-        )
-        
-        # Recompile the model
-        model.compile(
-            optimizer='adam',
-            loss='sparse_categorical_crossentropy',
-            metrics=['accuracy']
-        )
-        
-        # Load tokenizers  
+        # Load tokenizers
         with open('eng_tokenizer.pkl', 'rb') as f:
             eng_word_to_idx, eng_idx_to_word = pickle.load(f)
             
         with open('spa_tokenizer.pkl', 'rb') as f:
             spa_word_to_idx, spa_idx_to_word = pickle.load(f)
             
-        # Load configuration
         with open('config.pkl', 'rb') as f:
             config = pickle.load(f)
-            
+        
+        # Create fresh model architecture
+        model = create_model_architecture(
+            eng_vocab_size=len(eng_word_to_idx),
+            spa_vocab_size=len(spa_word_to_idx)
+        )
+        
+        # Load weights into fresh architecture
+        model.load_weights(weights_path)
+        st.success("✅ Model weights loaded into fresh architecture!")
+        
         return model, eng_word_to_idx, eng_idx_to_word, spa_word_to_idx, spa_idx_to_word, config
         
     except Exception as e:
         st.error(f"Error loading model or tokenizers: {str(e)}")
-        st.info("💡 If this persists, the model may need to be retrained with TensorFlow 2.20.0")
         return None, None, None, None, None, None
 
 def preprocess_text(text, is_spanish=False):
@@ -156,17 +162,6 @@ def main():
         height=100
     )
     
-    # Example sentences
-    if st.button("Try Example Sentences"):
-        examples = [
-            "Hello, how are you?",
-            "I am very happy.",
-            "Where is the bathroom?",
-            "Thank you very much.",
-            "I want to eat pizza."
-        ]
-        user_input = st.selectbox("Select an example:", examples)
-    
     # Translation button
     if st.button("🔄 Translate", type="primary"):
         if user_input.strip():
@@ -198,22 +193,6 @@ def main():
                     st.error(f"Translation error: {str(e)}")
         else:
             st.warning("Please enter some text to translate.")
-    
-    # Model information
-    st.markdown("---")
-    st.markdown("### 📊 Model Information")
-    
-    if config:
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("English Vocabulary", f"{config['ENG_VOCAB_SIZE']:,}")
-        
-        with col2:
-            st.metric("Spanish Vocabulary", f"{config['SPA_VOCAB_SIZE']:,}")
-            
-        with col3:
-            st.metric("Architecture", "LSTM Encoder-Decoder")
 
 if __name__ == "__main__":
     main()
