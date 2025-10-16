@@ -17,18 +17,17 @@ st.set_page_config(
 )
 
 def create_model_architecture(eng_vocab_size, spa_vocab_size, embedding_dim=256, hidden_units=256):
-    """Create model architecture without mask_zero to avoid custom layers"""
+    """Create EXACT same architecture as training - CRITICAL for weight loading"""
     
-    # Encoder
     encoder_inputs = Input(shape=(None,), name='encoder_inputs')
-    encoder_embedding = Embedding(eng_vocab_size, embedding_dim, mask_zero=False)(encoder_inputs)  # No mask_zero!
+    encoder_embedding = Embedding(eng_vocab_size, embedding_dim, mask_zero=True)(encoder_inputs)  # RESTORED!
     encoder_lstm = LSTM(hidden_units, return_state=True, dropout=0.2)
     encoder_outputs, state_h, state_c = encoder_lstm(encoder_embedding)
     encoder_states = [state_h, state_c]
 
-    # Decoder
+    # Decoder - EXACT match  
     decoder_inputs = Input(shape=(None,), name='decoder_inputs')
-    decoder_embedding = Embedding(spa_vocab_size, embedding_dim, mask_zero=False)(decoder_inputs)  # No mask_zero!
+    decoder_embedding = Embedding(spa_vocab_size, embedding_dim, mask_zero=True)(decoder_inputs)  # RESTORED!
     decoder_lstm = LSTM(hidden_units, return_sequences=True, return_state=True, dropout=0.2)
     decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
     decoder_dense = Dense(spa_vocab_size, activation='softmax')(decoder_outputs)
@@ -38,19 +37,18 @@ def create_model_architecture(eng_vocab_size, spa_vocab_size, embedding_dim=256,
     
     return model
 
+
 @st.cache_resource
 def load_model_and_tokenizers():
-    """Load model weights and tokenizers from Google Drive"""
+    """Load model weights and tokenizers with custom object handling"""
     
     weights_path = 'model.weights.h5'
-    architecture_path = 'model_architecture.pkl'
     
     # Download weights if not exists
     if not os.path.exists(weights_path):
         st.info("📥 Downloading model weights from Google Drive...")
         
-        # Use new file ID for weights (you'll need to upload weights file to Google Drive)
-        weights_file_id = '1QE7hUQVKMn7JqW-QqaxvMyKVarlabp7R'  # Replace with your weights file ID
+        weights_file_id = '1QE7hUQVKMn7JqW-QqaxvMyKVarlabp7R'  # Update with your weights file ID
         url = f'https://drive.google.com/uc?id={weights_file_id}'
         
         try:
@@ -71,15 +69,22 @@ def load_model_and_tokenizers():
         with open('config.pkl', 'rb') as f:
             config = pickle.load(f)
         
-        # Create fresh model architecture
+        # Create EXACT same architecture as training (with mask_zero=True)
         model = create_model_architecture(
             eng_vocab_size=len(eng_word_to_idx),
             spa_vocab_size=len(spa_word_to_idx)
         )
         
-        # Load weights into fresh architecture
-        model.load_weights(weights_path)
-        st.success("✅ Model weights loaded into fresh architecture!")
+        # Load weights into EXACT matching architecture
+        try:
+            model.load_weights(weights_path)
+            st.success("✅ Model weights loaded into exact training architecture!")
+        except Exception as e:
+            # If loading fails due to custom objects, try with custom scope
+            import tensorflow.keras.utils as keras_utils
+            with keras_utils.custom_object_scope({}):
+                model.load_weights(weights_path)
+                st.success("✅ Model weights loaded with custom object scope!")
         
         return model, eng_word_to_idx, eng_idx_to_word, spa_word_to_idx, spa_idx_to_word, config
         
