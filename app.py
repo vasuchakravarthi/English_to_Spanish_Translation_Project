@@ -42,7 +42,7 @@ def create_model_architecture(eng_vocab_size, spa_vocab_size, embedding_dim=256,
 def load_model_and_tokenizers():
     """Load model weights and tokenizers from Google Drive"""
     
-    weights_path = 'model_weights.h5'
+    weights_path = 'model.weights.h5'
     architecture_path = 'model_architecture.pkl'
     
     # Download weights if not exists
