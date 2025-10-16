@@ -50,7 +50,7 @@ def load_model_and_tokenizers():
         st.info("📥 Downloading model weights from Google Drive...")
         
         # Use new file ID for weights (you'll need to upload weights file to Google Drive)
-        weights_file_id = '1FeUEj87a03AU06b9HiL57xCVOn2m4EPQ'  # Replace with your weights file ID
+        weights_file_id = '1QE7hUQVKMn7JqW-QqaxvMyKVarlabp7R'  # Replace with your weights file ID
         url = f'https://drive.google.com/uc?id={weights_file_id}'
         
         try:
